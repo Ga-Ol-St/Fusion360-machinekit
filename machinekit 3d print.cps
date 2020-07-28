@@ -1,4 +1,8 @@
 /**
+Modified by GaOlSt for machinekit support
+
+Original Copyright:
+
   Copyright (C) 2018-2020 by Autodesk, Inc.
   All rights reserved.
 
@@ -10,8 +14,8 @@
   FORKID {A316FBC4-FA6E-41C5-A347-3D94F72F5D06}
 */
 
-description = "Machinekit";
-vendor = "GaOlSt";
+description = "Machinekit FFF Post";
+vendor = "Machinekit";
 vendorUrl = "http://www.machinekit.io";
 legal = "";
 certificationLevel = 2;
