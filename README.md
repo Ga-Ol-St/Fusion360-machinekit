@@ -1,4 +1,4 @@
-# Fusion360 Post processor for Machinekit FFF 3D printing
+# Fusion 360 Post processor for Machinekit FFF 3D printing
 currently supports:<br>
 Velocity extrusion<br>
 Firmware retraction<br>
