@@ -21,7 +21,7 @@ longDescription = "Use this post to understand which information is available wh
 extension = "dmp";
 // using user code page
 
-capabilities = CAPABILITY_INTERMEDIATE;
+capabilities = CAPABILITY_ADDITIVE;
 
 allowMachineChangeOnSection = true;
 allowHelicalMoves = true;
