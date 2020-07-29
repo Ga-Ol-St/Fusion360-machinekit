@@ -1,21 +1,17 @@
 /**
-Modified by GaOlSt for machinekit support
+ Copyright (C) 2018-2020 by Autodesk, Inc.
+ All rights reserved.
 
-Original Copyright:
+ 3D additive printer post configuration.
 
-  Copyright (C) 2018-2020 by Autodesk, Inc.
-  All rights reserved.
+ $Revision: 42682 9471a22a72e5b6a8be7a1bf341716ac0009d9847 $
+ $Date: 2020-03-09 03:36:19 $
 
-  3D additive printer post configuration.
+ FORKID {A316FBC4-FA6E-41C5-A347-3D94F72F5D06}
+ */
 
-  $Revision: 42682 9471a22a72e5b6a8be7a1bf341716ac0009d9847 $
-  $Date: 2020-03-09 03:36:19 $
-  
-  FORKID {A316FBC4-FA6E-41C5-A347-3D94F72F5D06}
-*/
-
-description = "Machinekit FFF Post";
-vendor = "Machinekit";
+description = "Machinekit";
+vendor = "GaOlSt";
 vendorUrl = "http://www.machinekit.io";
 legal = "";
 certificationLevel = 2;
@@ -71,9 +67,9 @@ var extruderOffsets = [[0, 0, 0], [0, 0, 0]];
 var lastPosition = {x: 0, y: 0, z: 0};
 var activeExtruder = 0;  //Track the active extruder.
 var extrudedDistance = 0;
-var filamentRetracted = true;
 var extruderFilamentParams =[[0,0],[0,0]]; // keep FilamentDiameter and crossSection of extruders
 var lastExtrusionRate = 0;
+var extrusionFeed;
 
 var xyzFormat = createFormat({decimals: (unit == MM ? 3 : 4)});
 var xFormat = createFormat({decimals: (unit == MM ? 3 : 4)});
@@ -81,6 +77,7 @@ var yFormat = createFormat({decimals: (unit == MM ? 3 : 4)});
 var zFormat = createFormat({decimals: (unit == MM ? 3 : 4)});
 var gFormat = createFormat({prefix: "G", width: 1, zeropad: false, decimals: 0});
 var mFormat = createFormat({prefix: "M", width: 2, zeropad: true, decimals: 0});
+var velocityExtrusionFormat = createFormat({prefix:"M700 P", width: 1, zeropad: false, decimals:4});
 var tFormat = createFormat({prefix: "T", width: 1, zeropad: false, decimals: 0});
 var feedFormat = createFormat({decimals: (unit == MM ? 0 : 1)});
 var integerFormat = createFormat({decimals:0});
@@ -97,14 +94,16 @@ var zOutput = createVariable({prefix: "Z"}, zFormat);
 var feedOutput = createVariable({prefix: "F"}, feedFormat);
 var aOutput = createVariable({prefix: "A"}, xyzFormat);  // Extrusion length
 var sOutput = createVariable({prefix: "S", force: true}, xyzFormat);  // Parameter temperature or speed
-var pOutput = createVariable({prefix: "P", force: true}, decimalFormat);  // Parameter value
-var tOutput = createVariable({prefix: "T", force: true}, integerFormat);  // Parameter value
-var qOutput = createVariable({prefix: "Q", force: true}, decimalFormat);  // Parameter value
-
+var pOutput = createVariable({prefix: "P", force: true}, decimalFormat);  // Parameter vale
+var tOutput = createVariable({prefix: "T", force: true}, integerFormat);  // Parameter vale
+var qOutput = createVariable({prefix: "Q", force: true}, decimalFormat);  // Parameter vale
+var velocityExtrusionOutput= createVariable({},velocityExtrusionFormat);
+var firmwareRetractOutput = createVariable({width: 1, zeropad: false, decimals: 0},gFormat);
 // Writes the specified block.
 function writeBlock() {
     writeWords(arguments);
 }
+
 
 function onOpen() {
     getPrinterGeometry();
@@ -116,8 +115,8 @@ function onOpen() {
         writeComment(programComment);
     }
 
-//    var fddddd = getExtruder(1).filamentDiameter;
-//    writeComment(fddddd)
+    var fddddd = getExtruder(1).filamentDiameter;
+    writeComment(fddddd)
     var filament_area = Math.pow(getExtruder(1).filamentDiameter,2)*Math.PI/4;
     extruderFilamentParams[0] = [getExtruder(1).filamentDiameter, filament_area];
     writeComment("Printer Name: " + machineConfiguration.getVendor() + " " + machineConfiguration.getModel());
@@ -150,8 +149,10 @@ function onOpen() {
         writeComment("Extruder 2 offset x: " + dimensionFormat.format(extruderOffsets[1][0]));
         writeComment("Extruder 2 offset y: " + dimensionFormat.format(extruderOffsets[1][1]));
         writeComment("Extruder 2 offset z: " + dimensionFormat.format(extruderOffsets[1][2]));
+
+
     }
-  
+
     writeComment("width: " + dimensionFormat.format(printerLimits.x.max));
     writeComment("depth: " + dimensionFormat.format(printerLimits.y.max));
     writeComment("height: " + dimensionFormat.format(printerLimits.z.max));
@@ -171,6 +172,7 @@ function onOpen() {
     if (properties.enableFirmareRetraction) {
         writeBlock(mFormat.format(207),pOutput.format(properties.retractLengthIndex),qOutput.format(properties.retractVelocityIndex));
     };
+    //enable velocity extrusion support
 }
 
 function getPrinterGeometry() {
@@ -197,16 +199,16 @@ function getPrinterGeometry() {
 }
 
 function onClose() {
-//    onImpliedCommand(COMMAND_END);
+    onImpliedCommand(COMMAND_END);
     writeComment("END OF GCODE");
     writeBlock(mFormat.format(2));
+
 }
 
 function onComment(message) {
     switch (message) {
         case "rapid-dry":
             writeComment(message);
-            // retract();
             break;
         default:
             writeComment(message);
@@ -239,55 +241,32 @@ function onSection() {
 
     // home XY
     writeRetract(X, Y);
-    if (!properties.useVelocityExtrusion) {
+    if (properties.useVelocityExtrusion) {
+        aOutput.format(0);
+    } else {
         writeBlock(gFormat.format(92), aOutput.format(0));
     }
 }
 
 function onRapid(_x, _y, _z) {
+    updateLastPosition();
     var x = xOutput.format(_x);
     var y = yOutput.format(_y);
     var z = zOutput.format(_z);
-    if (properties.useVelocityExtrusion) {
+    if (properties.useVelocityExtrusion && !properties.enableFirmareRetraction) {
         setExtrusionRate(0);
     }
     if (x || y || z) {
         writeBlock(gMotionModal.format(0), x, y, z);
     }
-    if (x) {
-        lastPosition.x = _x;
-    }
-    if (y) {
-        lastPosition.y = _y;
-    }
-    if (z) {
-        lastPosition.z = _z;
-    }
 }
 
 function retract() {
-    if (!properties.enableFirmareRetraction) {
-        return;
-    }
-
-    if (!filamentRetracted) {
-        writeBlock(gFormat.format(22));
-        filamentRetracted = true;
-    } else {
-        onComment("retract ignored - already retracted")
-    }
+    writeBlock(firmwareRetractOutput.format(22));
 }
 
 function preCharge() {
-    if (!properties.enableFirmareRetraction) {
-        return;
-    }
-    if (filamentRetracted) {
-        writeBlock(gFormat.format(23));
-        filamentRetracted = false;
-    } else {
-        writeComment("unretract ignored, already unretracted");
-    }
+    writeBlock(firmwareRetractOutput.format(23));
 }
 
 function hypot(a, b) {
@@ -299,15 +278,13 @@ function getExtrusionRate(_x,_y,_z,extrusionDistance) {
     var diffx = _x - lastPosition.x;
     var diffy = _y - lastPosition.y;
     var diffz = _z - lastPosition.z;
-    var diffExtrusion = extrusionDistance - extrudedDistance;
-
 
     var length = hypot(diffx, diffy);
     if (diffz !== 0) {
         length = hypot(length, diffz);
     }
     var filamentArea = extruderFilamentParams[activeExtruder][1];
-    var volume = diffExtrusion * filamentArea;
+    var volume = extrusionDistance * filamentArea;
     if (length == 0) {
         return 0;
     }
@@ -315,63 +292,64 @@ function getExtrusionRate(_x,_y,_z,extrusionDistance) {
 }
 
 function setExtrusionRate(rate) {
-    if (Math.abs(lastExtrusionRate - rate) > properties.velocityExtrusionTolerance) {
-        writeBlock(mFormat.format(700), pOutput.format(rate));
-        lastExtrusionRate = rate;
+    if (Math.abs(velocityExtrusionOutput.getCurrent() - rate) > properties.velocityExtrusionTolerance) {
+        writeBlock(velocityExtrusionOutput.format(rate));
+    }
+}
+
+function updateLastPosition() {
+    lastPosition.x = xOutput.getCurrent();
+    lastPosition.y = yOutput.getCurrent();
+    lastPosition.z = zOutput.getCurrent();
+}
+
+function retract_precharge(extrusionLength) {
+    if (properties.enableFirmareRetraction) {
+        if (extrusionLength > 0) {
+            preCharge();
+        } else if (extrusionLength < 0) {
+            retract();
+        }
+    } else {
+        if (extrusionLength > 0) {
+            writeComment("purge in place");
+            writeBlock(mFormat.format(710), pOutput.format(extrusionLength), qOutput.format(feedOutput.getCurrent()));
+        } else if (extrusionLength < 0) {
+            writeComment("retract in place");
+            writeBlock(mFormat.format(710), pOutput.format(Math.abs(extrusionLength)), qOutput.format(-feedOutput.getCurrent()));
+        }
     }
 }
 
 function onLinearExtrude(_x, _y, _z, _f, _a) {
+    if (properties.useVelocityExtrusion) {
+        updateLastPosition();
+    }
     var x = xOutput.format(_x);
     var y = yOutput.format(_y);
     var z = zOutput.format(_z);
     var f = feedOutput.format(_f);
+    var lastExtrusion = aOutput.getCurrent();
     var a = aOutput.format(_a);
     if (!properties.useVelocityExtrusion) {
         if (x || y || z || f || a) {
             writeBlock(gMotionModal.format(1), x, y, z, f, a);
+            return;
         }
     } else {
-        if (filamentRetracted && (extrudedDistance <= _a)) {
-            preCharge();
-            extrudedDistance = _a;
-        }
-
-        var onlyExtrusion;
-        onlyExtrusion = !(x || y || z );
-        if (extrudedDistance <= _a && a) {
-            if (onlyExtrusion && extrudedDistance < _a) {
-                var purgeVolume = _a - extrudedDistance;
-                writeComment("purge in place")
-                writeBlock(mFormat.format(710),pOutput.format(purgeVolume),qOutput.format(_f));
-            } else {
-                var rate = getExtrusionRate(_x,_y,_z,_a);
-                setExtrusionRate(rate);
-                writeBlock(gMotionModal.format(1), x, y, z, f);
-            }
-        } else if (extrudedDistance > _a && a ) {
-            // writeComment("debug");
-            // writeComment(extrudedDistance);
-            // writeComment(_a);
-            // extrudedDistance = _a;
-            retract();
-        } else {
+        var extrusionLength = _a - lastExtrusion;
+        var onlyExtrusion = !(x || y || z );
+        if (onlyExtrusion) {
+            retract_precharge(extrusionLength);
+        } else if (a) {
+            var rate = getExtrusionRate(_x,_y,_z,extrusionLength);
+            setExtrusionRate(rate);
             writeBlock(gMotionModal.format(1), x, y, z, f);
+        } else if (f) {
+            setFeedRate(_f);
+        } else {
+            writeComment("ERROR in processing, skipping - you should not see this");
         }
-
-    }
-
-    if (a && _a >0 ) {
-        extrudedDistance = _a;
-    }
-    if (x) {
-        lastPosition.x = _x;
-    }
-    if (y) {
-        lastPosition.y = _y;
-    }
-    if (z) {
-        lastPosition.z = _z;
     }
 }
 
